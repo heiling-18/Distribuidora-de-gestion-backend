@@ -6,12 +6,13 @@
   "scripts": {
     "test": "vitest run",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/database/migrations','dist/database/migrations',{recursive:true})\"",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:pull": "drizzle-kit pull"
+    "db:migrate": "tsx src/database/scripts/migrar.ts",
+    "db:seed": "tsx src/database/scripts/seed.ts",
+    "db:migrate:prod": "node dist/database/scripts/migrar.js"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +20,7 @@
   "type": "module",
   "dependencies": {
     "@node-rs/argon2": "^2.2.2",
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^18.0.9",
