@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import cors from 'cors';
-import type { Request } from 'express';
+import type { Request, RequestHandler } from 'express';
 import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import { env } from '../../config/env.js';
 import { NOMBRE_COOKIE_SESION } from '../../config/sesion.js';
+import { AppError } from '../../utils/errores/AppError.js';
 
 export const cabecerasSeguras = helmet();
 
@@ -33,6 +34,20 @@ export const limiteGeneral = rateLimit({
   keyGenerator: clavePorSesion,
   skip: () => env.esTest,
 });
+
+const METODOS_SEGUROS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Protección CSRF: una petición que cambia datos (POST, PATCH, PUT, DELETE) desde un navegador
+ * solo se acepta si su `Origin` está en CORS_ORIGIN. Sin `Origin` (curl, servidores) se mira
+ * `Sec-Fetch-Site`: si el navegador dice que viene de otro sitio, se rechaza.
+ */
+export const origenPermitido: RequestHandler = (req, _res, next) => {
+  if (METODOS_SEGUROS.has(req.method)) return next();
+  const origen = req.get('origin');
+  if (origen ? env.corsOrigins.includes(origen) : req.get('sec-fetch-site') !== 'cross-site') return next();
+  next(AppError.prohibido('Origen no permitido'));
+};
 
 /** Correo del intento de login, normalizado. */
 function clavePorCorreo(req: Request): string {

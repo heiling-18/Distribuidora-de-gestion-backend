@@ -14,8 +14,8 @@ export const obtener: RequestHandler = async (req, res) => {
 };
 
 export const crear: RequestHandler = async (req, res) => {
-  const gasto = await gastosService.crearGasto(usuarioActual(req), req.body as CrearGastoDto, req.ip ?? null);
-  res.status(201).json({ gasto });
+  // { gasto, aviso }: aviso si es efectivo de hoy y no hay caja abierta.
+  res.status(201).json(await gastosService.crearGasto(usuarioActual(req), req.body as CrearGastoDto, req.ip ?? null));
 };
 
 export const actualizar: RequestHandler = async (req, res) => {

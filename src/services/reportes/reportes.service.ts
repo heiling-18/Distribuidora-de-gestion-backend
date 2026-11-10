@@ -17,8 +17,9 @@ export async function dashboard(usuario: UsuarioSesion) {
 
   const inicioSemana = sumarDias(hoy, -6);
 
-  const [totalesHoy, caja, stockBajo, totalStockBajo, ultimas, porDia, inventario] = await Promise.all([
+  const [totalesHoy, totalesSiempre, caja, stockBajo, totalStockBajo, ultimas, porDia, inventario] = await Promise.all([
     reportesRepo.totalesPeriodo(hoy, manana),
+    reportesRepo.totalesPeriodo(null, manana),
     cajaRepo.buscarAbierta(),
     reportesRepo.productosStockBajo(5),
     reportesRepo.contarStockBajo(),
@@ -44,6 +45,13 @@ export async function dashboard(usuario: UsuarioSesion) {
     stockBajo: { total: totalStockBajo, productos: stockBajo },
     ultimasVentas: ultimas,
     semana,
+    // "Dinero total · todos los meses": ventas no anuladas menos todos los gastos. Lo ven admin y vendedor.
+    acumulado: {
+      efectivo: totalesSiempre.ventasEfectivo,
+      transferencia: totalesSiempre.ventasTransferencia,
+      gastos: totalesSiempre.totalGastos,
+      total: Math.round((totalesSiempre.ventasEfectivo + totalesSiempre.ventasTransferencia - totalesSiempre.totalGastos) * 100) / 100,
+    },
     // La inversión (a precio de compra) solo la ve el administrador.
     inventario: esAdmin ? inventario : inventarioPublico,
   };
@@ -70,16 +78,54 @@ export async function reporteMes(mes = mesNegocio()) {
   };
 }
 
-export async function historico() {
-  const [totales, porMes] = await Promise.all([
-    reportesRepo.totalesPeriodo(null, mesSiguiente(mesNegocio())),
-    reportesRepo.historicoPorMes(),
-  ]);
-  return { ...totales, margen: margen(totales.gananciaBruta, totales.totalVentas), porMes };
+/** Mes "YYYY-MM-01" que está `n` meses antes de `mes`. */
+function mesesAntes(mes: string, n: number): string {
+  const [a, m] = mes.split('-').map(Number) as [number, number];
+  return new Date(Date.UTC(a, m - 1 - n, 1)).toISOString().slice(0, 10);
 }
 
-export function listarCierresMensuales() {
-  return cierresRepo.listar();
+export async function historico() {
+  const actual = mesNegocio();
+  const [totales, porMes] = await Promise.all([
+    reportesRepo.totalesPeriodo(null, mesSiguiente(actual)),
+    reportesRepo.historicoPorMes(),
+  ]);
+  // Gráfica: los últimos 12 meses (incluido el actual), en orden y con los meses sin movimiento en 0.
+  const delMes = new Map(porMes.map((m) => [m.mes, m]));
+  const ultimos12Meses = Array.from({ length: 12 }, (_, i) => {
+    const mes = mesesAntes(actual, 11 - i);
+    const m = delMes.get(mes);
+    return {
+      mes,
+      totalVentas: m?.totalVentas ?? 0,
+      gananciaBruta: m?.gananciaBruta ?? 0,
+      numVentas: m?.numVentas ?? 0,
+      totalGastos: m?.totalGastos ?? 0,
+      utilidadNeta: m?.utilidadNeta ?? 0,
+    };
+  });
+  return {
+    ...totales,
+    margen: margen(totales.gananciaBruta, totales.totalVentas),
+    /** Primer mes con ventas o gastos ("YYYY-MM-01"); null si aún no hay movimiento. */
+    primerMes: porMes.at(-1)?.mes ?? null,
+    porMes,
+    ultimos12Meses,
+  };
+}
+
+/**
+ * Cierres de mes: las actas guardadas y los meses ya terminados con movimiento que aún no se cierran,
+ * con sus cifras calculadas al momento.
+ */
+export async function listarCierresMensuales() {
+  const [cierres, porMes] = await Promise.all([cierresRepo.listar(), reportesRepo.historicoPorMes()]);
+  const cerrados = new Set(cierres.map((c) => c.mes));
+  const actual = mesNegocio();
+  const porCerrar = porMes
+    .filter((m) => m.mes < actual && !cerrados.has(m.mes))
+    .map((m) => ({ ...m, margen: margen(m.gananciaBruta, m.totalVentas) }));
+  return { cierres, porCerrar };
 }
 
 /**

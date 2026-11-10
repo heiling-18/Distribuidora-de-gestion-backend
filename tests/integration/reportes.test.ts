@@ -81,6 +81,18 @@ describe('dashboard', () => {
     expect(comoVendedor.body.inventario).not.toHaveProperty('inversion');
   });
 
+  it('trae el dinero acumulado de todos los meses, también para el vendedor', async () => {
+    await escenarioMesActual();
+    await ventaEn(`${mesAnterior().slice(0, 8)}05T12:00:00-05:00`, 10000, 2000, 1);
+    await ventaEn(`${mesAnterior().slice(0, 8)}06T12:00:00-05:00`, 77777, 1, 1, true);
+    const vendedor = await sesionDe(app, 'vendedor');
+
+    const res = await request(app).get('/api/reportes/dashboard').set('Cookie', vendedor.cookie);
+    expect(res.body.acumulado).toEqual({ efectivo: 310000, transferencia: 90000, gastos: 50000, total: 350000 });
+    // Gastos del día también para el vendedor.
+    expect(res.body.hoy.totalGastos).toBe(50000);
+  });
+
   it('el galponero no ve el dashboard de la distribuidora', async () => {
     const { cookie } = await sesionDe(app, 'galponero');
     expect((await request(app).get('/api/reportes/dashboard').set('Cookie', cookie)).status).toBe(403);
@@ -177,5 +189,39 @@ describe('histórico', () => {
     expect(res.body.historico).toMatchObject({ totalVentas: 400000, gananciaBruta: 82000, totalGastos: 50000 });
     expect(res.body.historico.porMes.map((m: { mes: string }) => m.mes)).toEqual([mesNegocio(), mes]);
     expect(res.body.historico.porMes[0]).toMatchObject({ totalVentas: 390000, totalGastos: 50000, utilidadNeta: 30000 });
+
+    // Primer mes con movimiento y los 12 meses de la gráfica, con ceros donde no hubo ventas.
+    expect(res.body.historico.primerMes).toBe(mes);
+    const meses = res.body.historico.ultimos12Meses as { mes: string; totalVentas: number }[];
+    expect(meses).toHaveLength(12);
+    expect(meses[11]).toMatchObject({ mes: mesNegocio(), totalVentas: 390000 });
+    expect(meses[10]).toMatchObject({ mes, totalVentas: 10000 });
+    expect(meses[0]!.totalVentas).toBe(0);
+    expect(meses.map((m) => m.mes)).toEqual([...meses.map((m) => m.mes)].sort());
+  });
+
+  it('sin movimiento: primerMes null y 12 meses en cero', async () => {
+    const { cookie } = await sesionDe(app, 'admin');
+    const { historico } = (await request(app).get('/api/reportes/historico').set('Cookie', cookie)).body;
+    expect(historico.primerMes).toBeNull();
+    expect(historico.ultimos12Meses.every((m: { totalVentas: number }) => m.totalVentas === 0)).toBe(true);
+  });
+});
+
+describe('meses por cerrar', () => {
+  it('lista los meses terminados con movimiento que aún no se cierran, con sus cifras', async () => {
+    const admin = await escenarioMesActual();
+    const mes = mesAnterior();
+    await ventaEn(`${mes.slice(0, 8)}05T12:00:00-05:00`, 10000, 2000, 1);
+
+    const antes = (await request(app).get('/api/reportes/cierres-mes').set('Cookie', admin.cookie)).body;
+    expect(antes.cierres).toEqual([]);
+    // El mes en curso no aparece: aún no termina.
+    expect(antes.porCerrar).toEqual([expect.objectContaining({ mes, totalVentas: 10000, gananciaBruta: 2000, utilidadNeta: 2000, margen: 20 })]);
+
+    await request(app).post('/api/reportes/cierres-mes').set('Cookie', admin.cookie).send({ mes });
+    const despues = (await request(app).get('/api/reportes/cierres-mes').set('Cookie', admin.cookie)).body;
+    expect(despues.cierres).toHaveLength(1);
+    expect(despues.porCerrar).toEqual([]);
   });
 });

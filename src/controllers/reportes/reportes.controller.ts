@@ -16,7 +16,7 @@ export const historico: RequestHandler = async (_req, res) => {
 };
 
 export const listarCierres: RequestHandler = async (_req, res) => {
-  res.json({ cierres: await reportesService.listarCierresMensuales() });
+  res.json(await reportesService.listarCierresMensuales());
 };
 
 export const cerrarMes: RequestHandler = async (req, res) => {

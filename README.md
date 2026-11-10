@@ -105,15 +105,15 @@ Todo vive bajo `/api`. Salvo `/health` y `/auth/login|logout`, **todo exige sesi
 
 | Módulo | Rutas | Roles |
 |---|---|---|
-| Salud | `GET /health` | público |
+| Salud | `GET /health` (estado de la base y de las migraciones: `ultima`, `pendientes`) | público |
 | Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/cambiar-clave` | público / con sesión |
 | Usuarios | `GET,POST /usuarios`, `GET,PATCH /usuarios/:id`, `POST /usuarios/:id/restablecer-clave` | admin |
 | Caja | `GET /caja/actual`, `GET /caja/actual/resumen`, `POST /caja/abrir`, `POST /caja/cerrar`, `GET /caja/cierres[/:id]` | admin, vendedor |
-| Ventas | `POST /ventas`, `GET /ventas[/:id]`, `POST /ventas/:id/anular` (admin) | admin, vendedor |
+| Ventas | `POST /ventas`, `GET /ventas[/:id]`, `POST /ventas/:id/anular` | admin, vendedor |
 | Productos | `GET /productos[/:id]`; `POST`, `PATCH`, `DELETE`, `POST /:id/ajuste-stock`, `GET /:id/movimientos` (admin) | admin, vendedor |
 | Clientes | `GET,POST /clientes`, `GET,PATCH /clientes/:id`; `DELETE` (admin) | admin, vendedor |
 | Gastos | `GET,POST /gastos`, `GET,PATCH,DELETE /gastos/:id` | admin |
-| Reportes | `GET /reportes/dashboard` (admin, vendedor); `GET /reportes/mes`, `GET /reportes/historico`, `GET,POST /reportes/cierres-mes` (admin) | |
+| Reportes | `GET /reportes/dashboard` (admin, vendedor; incluye `acumulado` de todos los meses); `GET /reportes/mes`, `GET /reportes/historico` (con `primerMes` y `ultimos12Meses`), `GET,POST /reportes/cierres-mes` (actas y meses `porCerrar`) (admin) | |
 | Galpones | `GET /galpones`, `GET /galpones/registros`, `PUT /galpones/:id/registros/:fecha`; crear, editar y borrar (admin) | admin, galponero |
 | Configuración | `GET /configuracion`; `PATCH` (admin) | con sesión |
 
@@ -126,7 +126,8 @@ Los errores siempre llegan como `{ "error": { "codigo", "mensaje", "detalles" } 
 - **Sesión:** JWT en cookie `httpOnly`. Cambiar la clave, el rol o desactivar a un usuario cierra sus sesiones al instante. Las claves bcrypt importadas de Supabase sirven y se pasan a argon2 en el primer login.
 - **Caja:** solo una abierta a la vez. El efectivo esperado y la diferencia los calcula el servidor; el cierre es atómico.
 - **Ventas:** el precio y los totales salen de la base (el cliente solo manda producto, cantidad y tipo de precio). **Los precios incluyen IVA**: el IVA se separa del total, no se suma. Exige caja abierta, bloquea el stock por fila y usa una clave de idempotencia para no duplicar ventas.
-- **Anulación:** solo admin; devuelve el stock por producto. No se puede anular si **la caja de la venta ya se cerró** o si **el mes ya se cerró**.
+- **Anulación:** admin o vendedor, con motivo obligatorio y registro en la auditoría; devuelve el stock por producto. Se puede anular aunque la caja de la venta ya se cerró (el acta de ese cierre no cambia). Solo se bloquea si **el mes ya se cerró**.
+- **Gastos:** un gasto en efectivo de hoy se liga a la caja abierta y se descuenta del arqueo. Si no hay caja abierta se guarda igual y la respuesta trae un `aviso`.
 - **Costos:** el precio de compra, el costo y la ganancia solo los ve el administrador.
 - **Inventario:** el stock nunca se escribe directo; todo cambio queda en `inventario_movimientos` (venta, anulación, compra, ajuste).
 - **Fechas:** "hoy" y "mes" siempre en hora de Colombia, nunca UTC.
@@ -136,10 +137,21 @@ Los errores siempre llegan como `{ "error": { "codigo", "mensaje", "detalles" } 
 
 ## Producción
 
-1. PostgreSQL administrado con **backups automáticos diarios**.
-2. Variables de entorno con `NODE_ENV=production`, un `JWT_SECRET` nuevo y largo, y `COOKIE_SAMESITE` según el dominio.
-3. `npm ci && npm run build && npm run db:migrate:prod && npm start`.
+1. PostgreSQL administrado con **backups automáticos diarios**, y una restauración probada antes del corte.
+2. Variables de entorno con `NODE_ENV=production`, un `JWT_SECRET` nuevo de 64 caracteres o más y `TZ_NEGOCIO=America/Bogota`.
+3. `npm ci && npm run build && npm run db:migrate:prod && npm start`. Después, `GET /api/health` debe decir `pendientes: 0`.
 4. Servir detrás de HTTPS.
+
+### Conectar la página (Vercel)
+
+La sesión viaja en una cookie, así que el dominio decide la configuración.
+
+- **Recomendado: mismo dominio.** La página reenvía `/api/*` a esta API con `rewrites()` en `next.config.ts`. La cookie queda en el dominio de la página y basta `COOKIE_SAMESITE=lax`. El límite de peticiones cuenta por sesión, no por IP, justamente por este reenvío.
+- **Dominios distintos:** `COOKIE_SAMESITE=none` (exige HTTPS).
+
+En los dos casos, `CORS_ORIGIN` debe tener el dominio exacto de la página (y el de vista previa si se usa): la API rechaza con 403 cualquier `POST`, `PATCH`, `PUT` o `DELETE` cuyo `Origin` no esté en esa lista (protección CSRF). El reenvío de Next conserva el `Origin` del navegador.
+
+**Corte:** congelar ventas en Supabase, importar, conciliar, apuntar la página a la API y dejar Supabase en solo lectura una semana por si hay que volver.
 
 ### Pendiente antes de reemplazar Supabase
 

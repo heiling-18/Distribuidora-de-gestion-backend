@@ -172,7 +172,8 @@ export async function obtenerVenta(id: number) {
   return venta;
 }
 
-export async function anularVenta(admin: UsuarioSesion, id: number, motivo: string, ip: string | null) {
+/** Anula una venta (admin o vendedor) y devuelve el stock. Bloquea solo si el mes ya se cerró. */
+export async function anularVenta(usuario: UsuarioSesion, id: number, motivo: string, ip: string | null) {
   return db.transaction(async (tx) => {
     const venta = await ventasRepo.bloquearPorId(id, tx);
     if (!venta) throw AppError.noEncontrado('Venta no encontrada');
@@ -180,14 +181,8 @@ export async function anularVenta(admin: UsuarioSesion, id: number, motivo: stri
     if (await mesCerrado(mesNegocio(venta.fecha), tx)) {
       throw AppError.conflicto('El mes de esta venta ya está cerrado; no se puede anular');
     }
-    // Una venta que ya entró en un arqueo cerrado no se anula: cambiaría un cierre de caja ya firmado.
-    // (Bloqueo compartido: si la caja se está cerrando en este momento, se espera a que termine.)
-    if (venta.cajaId) {
-      const caja = await cajaRepo.compartirPorId(venta.cajaId, tx);
-      if (caja?.estado === 'cerrada') {
-        throw AppError.conflicto('La caja de esta venta ya se cerró; no se puede anular. Si devolvieron la mercancía, registra el ajuste de stock y el gasto de la devolución.');
-      }
-    }
+    // Se puede anular aunque la caja de la venta ya se haya cerrado (como en la página actual):
+    // el arqueo cerrado guarda sus cifras y no cambia. Solo el mes cerrado bloquea.
 
     // Devuelve el stock por producto_id (nunca por nombre). Líneas sin producto (importadas) no mueven stock.
     const items = await ventasRepo.itemsDe(venta.id, tx);
@@ -199,14 +194,14 @@ export async function anularVenta(admin: UsuarioSesion, id: number, motivo: stri
     const movimientos = [];
     for (const [productoId, cantidad] of devolucion) {
       const stockResultante = await productosRepo.moverStock(productoId, cantidad, tx);
-      movimientos.push({ productoId, tipo: 'anulacion' as const, cantidad, stockResultante, ventaId: venta.id, usuarioId: admin.id, motivo });
+      movimientos.push({ productoId, tipo: 'anulacion' as const, cantidad, stockResultante, ventaId: venta.id, usuarioId: usuario.id, motivo });
     }
     await productosRepo.registrarMovimientos(movimientos, tx);
 
-    const anulada = await ventasRepo.marcarAnulada(venta.id, { motivo, anuladaPor: admin.id }, tx);
+    const anulada = await ventasRepo.marcarAnulada(venta.id, { motivo, anuladaPor: usuario.id }, tx);
     await registrarEvento(
       {
-        usuarioId: admin.id,
+        usuarioId: usuario.id,
         accion: 'venta.anular',
         entidad: 'venta',
         entidadId: venta.id,

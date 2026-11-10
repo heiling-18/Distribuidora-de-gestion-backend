@@ -3,7 +3,7 @@ import express from 'express';
 import { pinoHttp } from 'pino-http';
 import { manejarErrores } from './middlewares/errores/manejarErrores.js';
 import { noEncontrado } from './middlewares/errores/noEncontrado.js';
-import { cabecerasSeguras, corsPermitido, limiteGeneral } from './middlewares/seguridad/seguridad.js';
+import { cabecerasSeguras, corsPermitido, limiteGeneral, origenPermitido } from './middlewares/seguridad/seguridad.js';
 import { rutas } from './routes/index.js';
 import { logger } from './utils/logger/logger.js';
 
@@ -16,6 +16,7 @@ export function crearApp() {
   app.use(pinoHttp({ logger }));
   app.use(cabecerasSeguras);
   app.use(corsPermitido);
+  app.use(origenPermitido);
   // cookieParser antes del límite: el límite cuenta por sesión.
   app.use(cookieParser());
   app.use(limiteGeneral);

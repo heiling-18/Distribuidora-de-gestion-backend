@@ -51,12 +51,16 @@ describe('gastos y caja', () => {
     const admin = await sesionDe(app, 'admin');
     const sinCaja = await request(app).post('/api/gastos').set('Cookie', admin.cookie).send(gasto);
     expect(sinCaja.body.gasto.cajaId).toBeNull();
+    // Efectivo de hoy sin caja abierta: se guarda, pero avisa que no entra en ningún arqueo.
+    expect(sinCaja.body.aviso).toContain('caja abierta');
 
     await request(app).post('/api/caja/abrir').set('Cookie', admin.cookie).send({ montoInicial: 0 });
     const transf = await request(app).post('/api/gastos').set('Cookie', admin.cookie).send({ ...gasto, metodoPago: 'transferencia' });
     expect(transf.body.gasto.cajaId).toBeNull();
+    expect(transf.body.aviso).toBeNull();
     const ayer = await request(app).post('/api/gastos').set('Cookie', admin.cookie).send({ ...gasto, fecha: '2026-01-02' });
     expect(ayer.body.gasto.cajaId).toBeNull();
+    expect(ayer.body.aviso).toBeNull();
   });
 
   it('un gasto de una caja ya cerrada no se puede editar ni borrar', async () => {

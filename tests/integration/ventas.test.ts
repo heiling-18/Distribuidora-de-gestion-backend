@@ -4,7 +4,7 @@ import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { crearApp } from '../../src/app.js';
 import { cerrarDb, db } from '../../src/database/client.js';
-import { cierresMensuales, clientes, inventarioMovimientos, productos, ventas } from '../../src/models/index.js';
+import { auditoria, cierresMensuales, clientes, inventarioMovimientos, productos, ventas } from '../../src/models/index.js';
 import { fechaNegocio, mesNegocio } from '../../src/utils/fecha/fecha.js';
 import { limpiarBase } from '../helpers/db.js';
 import { crearUsuario, iniciarSesion } from '../helpers/usuarios.js';
@@ -251,9 +251,20 @@ describe('anular venta', () => {
     return { vendedor, admin, p, venta: res.body.venta };
   }
 
-  it('solo el administrador puede anular', async () => {
-    const { vendedor, venta } = await ventaHecha();
-    const res = await request(app).post(`/api/ventas/${venta.id}/anular`).set('Cookie', vendedor.cookie).send({ motivo: 'error' });
+  it('el vendedor también puede anular, con motivo y auditoría', async () => {
+    const { vendedor, p, venta } = await ventaHecha();
+    const res = await request(app).post(`/api/ventas/${venta.id}/anular`).set('Cookie', vendedor.cookie).send({ motivo: 'error de cobro' });
+    expect(res.status).toBe(200);
+    expect(res.body.venta).toMatchObject({ estado: 'anulada', anuladaPor: vendedor.usuario.id });
+    expect(await stockDe(p.id)).toBe(20);
+    const [evento] = await db.select().from(auditoria).where(eq(auditoria.accion, 'venta.anular'));
+    expect(evento).toMatchObject({ usuarioId: vendedor.usuario.id, entidadId: String(venta.id) });
+  });
+
+  it('el galponero no puede anular', async () => {
+    const { venta } = await ventaHecha();
+    const galponero = await sesion('galponero');
+    const res = await request(app).post(`/api/ventas/${venta.id}/anular`).set('Cookie', galponero.cookie).send({ motivo: 'error' });
     expect(res.status).toBe(403);
   });
 
@@ -331,17 +342,19 @@ describe('revisión: costos e idempotencia', () => {
   });
 });
 
-describe('revisión: anular con la caja cerrada', () => {
-  it('no se puede anular una venta cuya caja ya se cerró', async () => {
+describe('anular con la caja cerrada', () => {
+  it('se puede anular aunque la caja ya se cerró, y el arqueo cerrado no cambia', async () => {
     const vendedor = await listoParaVender();
     const p = await producto();
     const { body } = await vender(vendedor.cookie, [{ productoId: p.id, cantidad: 2 }]);
-    await request(app).post('/api/caja/cerrar').set('Cookie', vendedor.cookie).send({ dineroReal: 250000 });
+    const cierre = await request(app).post('/api/caja/cerrar').set('Cookie', vendedor.cookie).send({ dineroReal: 250000 });
+
+    const res = await request(app).post(`/api/ventas/${body.venta.id}/anular`).set('Cookie', vendedor.cookie).send({ motivo: 'tarde' });
+    expect(res.status).toBe(200);
+    expect(await stockDe(p.id)).toBe(20);
 
     const admin = await sesion('admin');
-    const res = await request(app).post(`/api/ventas/${body.venta.id}/anular`).set('Cookie', admin.cookie).send({ motivo: 'tarde' });
-    expect(res.status).toBe(409);
-    expect(res.body.error.mensaje).toContain('caja');
-    expect(await stockDe(p.id)).toBe(18);
+    const acta = await request(app).get(`/api/caja/cierres/${cierre.body.cierre.id}`).set('Cookie', admin.cookie);
+    expect(acta.body.cierre.ventasEfectivo).toBe(cierre.body.cierre.ventasEfectivo);
   });
 });

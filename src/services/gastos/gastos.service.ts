@@ -41,6 +41,10 @@ export async function obtenerGasto(id: number) {
   return g;
 }
 
+/**
+ * Registra un gasto. Si es en efectivo de hoy y no hay caja abierta, se guarda igual pero con un aviso:
+ * no quedará descontado en ningún arqueo.
+ */
 export async function crearGasto(admin: UsuarioSesion, dto: CrearGastoDto, ip: string | null) {
   const fecha = dto.fecha ?? fechaNegocio();
   return db.transaction(async (tx) => {
@@ -48,7 +52,11 @@ export async function crearGasto(admin: UsuarioSesion, dto: CrearGastoDto, ip: s
     const cajaId = await cajaPara(fecha, dto.metodoPago, tx);
     const gasto = await gastosRepo.crear({ ...dto, fecha, cajaId, registradoPor: admin.id }, tx);
     await registrarEvento({ usuarioId: admin.id, accion: 'gasto.crear', entidad: 'gasto', entidadId: gasto.id, despues: gasto, ip }, tx);
-    return (await gastosRepo.buscarPorId(gasto.id, tx))!;
+    const sinCaja = dto.metodoPago === 'efectivo' && fecha === fechaNegocio() && !cajaId;
+    return {
+      gasto: (await gastosRepo.buscarPorId(gasto.id, tx))!,
+      aviso: sinCaja ? 'No hay una caja abierta: este gasto en efectivo no se descontará de ningún arqueo.' : null,
+    };
   });
 }
 
