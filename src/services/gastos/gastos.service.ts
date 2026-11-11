@@ -23,11 +23,14 @@ async function cajaPara(fecha: string, metodoPago: 'efectivo' | 'transferencia',
   return (await cajaRepo.compartirAbierta(tx))?.id ?? null;
 }
 
-/** Un gasto que ya entró en un arqueo cerrado no se puede tocar: cambiaría un cierre que ya se firmó. */
-async function validarCajaNoCerrada(cajaId: number | null, tx: Tx) {
-  if (!cajaId) return;
-  const caja = await cajaRepo.compartirPorId(cajaId, tx);
-  if (caja?.estado === 'cerrada') throw AppError.conflicto('Este gasto pertenece a una caja ya cerrada; no se puede modificar');
+/**
+ * Un gasto de una caja ya cerrada sí se puede editar o borrar (como en la página actual; solo el mes
+ * cerrado lo bloquea). El acta de ese cierre guarda sus cifras y no cambia. Al editarlo se queda en su
+ * caja: no pasa al arqueo de la caja abierta de hoy.
+ */
+async function deCajaCerrada(cajaId: number | null, tx: Tx): Promise<boolean> {
+  if (!cajaId) return false;
+  return (await cajaRepo.compartirPorId(cajaId, tx))?.estado === 'cerrada';
 }
 
 export async function listarGastos(filtro: FiltroGastos) {
@@ -64,14 +67,14 @@ export async function actualizarGasto(admin: UsuarioSesion, id: number, cambios:
   return db.transaction(async (tx) => {
     const antes = await gastosRepo.bloquearPorId(id, tx);
     if (!antes) throw AppError.noEncontrado('Gasto no encontrado');
-    await validarCajaNoCerrada(antes.cajaId, tx);
     await validarFecha(antes.fecha, tx);
 
     const fecha = cambios.fecha ?? antes.fecha;
     const metodoPago = cambios.metodoPago ?? antes.metodoPago;
     if (cambios.fecha) await validarFecha(fecha, tx);
 
-    const despues = await gastosRepo.actualizar(id, { ...cambios, cajaId: await cajaPara(fecha, metodoPago, tx) }, tx);
+    const cajaId = (await deCajaCerrada(antes.cajaId, tx)) ? antes.cajaId : await cajaPara(fecha, metodoPago, tx);
+    const despues = await gastosRepo.actualizar(id, { ...cambios, cajaId }, tx);
     await registrarEvento({ usuarioId: admin.id, accion: 'gasto.actualizar', entidad: 'gasto', entidadId: id, antes, despues, ip }, tx);
     return (await gastosRepo.buscarPorId(id, tx))!;
   });
@@ -81,7 +84,6 @@ export async function eliminarGasto(admin: UsuarioSesion, id: number, ip: string
   await db.transaction(async (tx) => {
     const antes = await gastosRepo.bloquearPorId(id, tx);
     if (!antes) throw AppError.noEncontrado('Gasto no encontrado');
-    await validarCajaNoCerrada(antes.cajaId, tx);
     await validarFecha(antes.fecha, tx);
     await gastosRepo.eliminar(id, tx);
     // La auditoría guarda el gasto completo: el borrado queda trazable.

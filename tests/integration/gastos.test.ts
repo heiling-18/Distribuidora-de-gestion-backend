@@ -63,16 +63,24 @@ describe('gastos y caja', () => {
     expect(ayer.body.aviso).toBeNull();
   });
 
-  it('un gasto de una caja ya cerrada no se puede editar ni borrar', async () => {
+  it('un gasto de una caja ya cerrada se puede editar y borrar; el acta no cambia', async () => {
     const admin = await sesionDe(app, 'admin');
     await request(app).post('/api/caja/abrir').set('Cookie', admin.cookie).send({ montoInicial: 100000 });
     const { body } = await request(app).post('/api/gastos').set('Cookie', admin.cookie).send(gasto);
-    await request(app).post('/api/caja/cerrar').set('Cookie', admin.cookie).send({ dineroReal: 15000 });
+    const cierre = await request(app).post('/api/caja/cerrar').set('Cookie', admin.cookie).send({ dineroReal: 15000 });
+    // Una caja nueva abierta hoy: el gasto editado no debe pasar a su arqueo.
+    await request(app).post('/api/caja/abrir').set('Cookie', admin.cookie).send({ montoInicial: 0 });
 
     const editar = await request(app).patch(`/api/gastos/${body.gasto.id}`).set('Cookie', admin.cookie).send({ monto: 1 });
+    expect(editar.status).toBe(200);
+    expect(editar.body.gasto).toMatchObject({ monto: 1, cajaId: body.gasto.cajaId });
+    const resumen = await request(app).get('/api/caja/actual/resumen').set('Cookie', admin.cookie);
+    expect(resumen.body.resumen.gastosEfectivo).toBe(0);
+
     const borrar = await request(app).delete(`/api/gastos/${body.gasto.id}`).set('Cookie', admin.cookie);
-    expect(editar.status).toBe(409);
-    expect(borrar.status).toBe(409);
+    expect(borrar.status).toBe(204);
+    const acta = await request(app).get(`/api/caja/cierres/${cierre.body.cierre.id}`).set('Cookie', admin.cookie);
+    expect(acta.body.cierre.gastosEfectivo).toBe(85000);
   });
 });
 

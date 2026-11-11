@@ -127,7 +127,7 @@ Los errores siempre llegan como `{ "error": { "codigo", "mensaje", "detalles" } 
 - **Caja:** solo una abierta a la vez. El efectivo esperado y la diferencia los calcula el servidor; el cierre es atómico.
 - **Ventas:** el precio y los totales salen de la base (el cliente solo manda producto, cantidad y tipo de precio). **Los precios incluyen IVA**: el IVA se separa del total, no se suma. Exige caja abierta, bloquea el stock por fila y usa una clave de idempotencia para no duplicar ventas.
 - **Anulación:** admin o vendedor, con motivo obligatorio y registro en la auditoría; devuelve el stock por producto. Se puede anular aunque la caja de la venta ya se cerró (el acta de ese cierre no cambia). Solo se bloquea si **el mes ya se cerró**.
-- **Gastos:** un gasto en efectivo de hoy se liga a la caja abierta y se descuenta del arqueo. Si no hay caja abierta se guarda igual y la respuesta trae un `aviso`.
+- **Gastos:** un gasto en efectivo de hoy se liga a la caja abierta y se descuenta del arqueo. Si no hay caja abierta se guarda igual y la respuesta trae un `aviso`. Un gasto de una caja ya cerrada se puede editar o borrar (el acta no cambia); solo se bloquea si el mes está cerrado.
 - **Costos:** el precio de compra, el costo y la ganancia solo los ve el administrador.
 - **Inventario:** el stock nunca se escribe directo; todo cambio queda en `inventario_movimientos` (venta, anulación, compra, ajuste).
 - **Fechas:** "hoy" y "mes" siempre en hora de Colombia, nunca UTC.
