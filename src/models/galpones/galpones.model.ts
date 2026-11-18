@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { bigint, boolean, check, date, index, integer, numeric, pgTable, text, unique } from 'drizzle-orm/pg-core';
 import { actualizadoEn, creadoEn } from '../comunes/columnas.js';
+import { tipoGalpon } from '../comunes/enums.js';
 import { usuarios } from '../usuarios/usuarios.model.js';
 
 export const galpones = pgTable(
@@ -13,12 +14,16 @@ export const galpones = pgTable(
     edadSemanasLlegada: integer().notNull().default(0),
     /** Alimento por ave al día. Gallinas en postura ≈ 115 g. */
     gramosAveDia: numeric({ precision: 6, scale: 1, mode: 'number' }).notNull().default(115),
+    tipo: tipoGalpon().notNull().default('postura'),
+    /** Valor del bulto de 40 kg de purina de este galpón (0 = sin precio). */
+    precioBulto: numeric({ precision: 12, scale: 2, mode: 'number' }).notNull().default(0),
     activo: boolean().notNull().default(true),
     creadoEn: creadoEn(),
   },
   (t) => [
     check('galpones_aves_validas', sql`${t.avesIniciales} >= 0 and ${t.edadSemanasLlegada} >= 0`),
     check('galpones_gramos_validos', sql`${t.gramosAveDia} > 0`),
+    check('galpones_precio_bulto_valido', sql`${t.precioBulto} >= 0`),
   ],
 );
 
@@ -34,6 +39,8 @@ export const galponRegistros = pgTable(
     huevos: integer().notNull().default(0),
     muertas: integer().notNull().default(0),
     alimentoKg: numeric({ precision: 8, scale: 2, mode: 'number' }).notNull().default(0),
+    /** Precio del bulto ese día: el gasto de días pasados no cambia si después sube el bulto. */
+    precioBulto: numeric({ precision: 12, scale: 2, mode: 'number' }),
     notas: text(),
     registradoPor: bigint({ mode: 'number' }).references(() => usuarios.id),
     registradoPorNombre: text(),
@@ -47,5 +54,6 @@ export const galponRegistros = pgTable(
       'galpon_registros_valores_validos',
       sql`${t.huevos} >= 0 and ${t.muertas} >= 0 and ${t.alimentoKg} >= 0`,
     ),
+    check('galpon_registros_precio_bulto_valido', sql`${t.precioBulto} is null or ${t.precioBulto} >= 0`),
   ],
 );

@@ -120,3 +120,59 @@ describe('registro diario', () => {
     expect((await request(app).get('/api/galpones/registros').set('Cookie', admin.cookie)).body.total).toBe(1);
   });
 });
+
+describe('levante y precio del bulto', () => {
+  it('un galpón de levante no registra huevos, solo alimento y muertas', async () => {
+    const admin = await sesionDe(app, 'admin');
+    const g = await galponCreado(admin.cookie, { tipo: 'levante', edadSemanasLlegada: 0 });
+    const conHuevos = await request(app).put(`/api/galpones/${g.id}/registros/${hoy()}`).set('Cookie', admin.cookie).send({ huevos: 5, alimentoKg: 10 });
+    expect(conHuevos.status).toBe(400);
+    expect(conHuevos.body.error.mensaje).toContain('levante');
+    const sinHuevos = await request(app).put(`/api/galpones/${g.id}/registros/${hoy()}`).set('Cookie', admin.cookie).send({ muertas: 2, alimentoKg: 10 });
+    expect(sinHuevos.status).toBe(200);
+
+    const lista = await request(app).get('/api/galpones').set('Cookie', admin.cookie);
+    expect(lista.body.galpones[0]).toMatchObject({ tipo: 'levante', precioBulto: 0 });
+  });
+
+  it('cada día guarda el precio del bulto: subir el precio no cambia el gasto de días pasados', async () => {
+    const admin = await sesionDe(app, 'admin');
+    const g = await galponCreado(admin.cookie, { precioBulto: 100000 });
+    const ayer = sumarDias(hoy(), -1);
+    await request(app).put(`/api/galpones/${g.id}/registros/${ayer}`).set('Cookie', admin.cookie).send({ huevos: 800, alimentoKg: 40 });
+
+    await request(app).patch(`/api/galpones/${g.id}`).set('Cookie', admin.cookie).send({ precioBulto: 120000 });
+    await request(app).put(`/api/galpones/${g.id}/registros/${hoy()}`).set('Cookie', admin.cookie).send({ huevos: 800, alimentoKg: 20 });
+    // Corregir ayer conserva el precio que tenía ese día.
+    const corregido = await request(app).put(`/api/galpones/${g.id}/registros/${ayer}`).set('Cookie', admin.cookie).send({ huevos: 800, alimentoKg: 80 });
+    expect(corregido.body.registro.precioBulto).toBe(100000);
+
+    const [galpon] = (await request(app).get('/api/galpones').set('Cookie', admin.cookie)).body.galpones;
+    expect(galpon.alimento).toEqual({
+      hoy: { kg: 20, gasto: 60000 }, // 20 kg × 120.000 / 40
+      lote: { kg: 100, gasto: 260000 }, // 80 kg × 100.000 / 40 + 60.000
+    });
+  });
+
+  it('valida tipo y precio del bulto', async () => {
+    const admin = await sesionDe(app, 'admin');
+    const base = { nombre: 'X', avesIniciales: 10, fechaLlegada: hoy() };
+    expect((await request(app).post('/api/galpones').set('Cookie', admin.cookie).send({ ...base, tipo: 'engorde' })).status).toBe(400);
+    expect((await request(app).post('/api/galpones').set('Cookie', admin.cookie).send({ ...base, precioBulto: -1 })).status).toBe(400);
+  });
+});
+
+describe('totales por galpón', () => {
+  it('las muertas y el alimento de un galpón no se mezclan con los de otro', async () => {
+    const admin = await sesionDe(app, 'admin');
+    const g1 = await galponCreado(admin.cookie, { nombre: 'A' });
+    const g2 = await galponCreado(admin.cookie, { nombre: 'B', precioBulto: 80000 });
+    await request(app).put(`/api/galpones/${g2.id}/registros/${hoy()}`).set('Cookie', admin.cookie).send({ muertas: 5, alimentoKg: 40 });
+    await request(app).put(`/api/galpones/${g2.id}/registros/${sumarDias(hoy(), -1)}`).set('Cookie', admin.cookie).send({ muertas: 1 });
+
+    const { galpones } = (await request(app).get('/api/galpones').set('Cookie', admin.cookie)).body;
+    const porId = new Map(galpones.map((g: { id: number }) => [g.id, g]));
+    expect(porId.get(g1.id)).toMatchObject({ muertasTotales: 0, registradoHoy: false, alimento: { lote: { kg: 0, gasto: 0 } } });
+    expect(porId.get(g2.id)).toMatchObject({ muertasTotales: 6, registradoHoy: true, alimento: { hoy: { kg: 40, gasto: 80000 } } });
+  });
+});

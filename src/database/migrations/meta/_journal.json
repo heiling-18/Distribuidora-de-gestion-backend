@@ -8,6 +8,13 @@
       "when": 1794114550335,
       "tag": "0000_esquema_inicial",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795032701240,
+      "tag": "0001_galpones_levante",
+      "breakpoints": true
     }
   ]
 }

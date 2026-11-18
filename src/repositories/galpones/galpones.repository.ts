@@ -8,12 +8,39 @@ type Ejecutor = Db | Tx;
 export type FilaGalpon = typeof galpones.$inferSelect;
 export type FilaRegistro = typeof galponRegistros.$inferSelect;
 
-/** Galpones con las aves muertas acumuladas y el registro de un día. */
+export const KG_POR_BULTO = 40;
+
+/**
+ * Suma sobre los registros de cada galpón (subconsulta correlacionada).
+ * Los nombres van escritos con su tabla a propósito: dentro de una subconsulta Drizzle no los califica,
+ * y `"galpon_id" = "id"` compararía el id del propio registro en vez del galpón.
+ */
+const sobreRegistros = (expresion: string, filtro?: SQL) =>
+  sql<number>`coalesce((select ${sql.raw(expresion)} from "galpon_registros" r where r."galpon_id" = "galpones"."id"${filtro ? sql` and ${filtro}` : sql``}), 0)`.mapWith(Number);
+
+/** Galpones con las aves muertas acumuladas, el registro de un día y el gasto en alimento (del día y del lote). */
 export function listarConTotales(filtroActivo: 'true' | 'false' | 'todos', dia: string, ej: Ejecutor = db) {
-  const muertas = sql<number>`coalesce((select sum(${galponRegistros.muertas}) from ${galponRegistros} where ${galponRegistros.galponId} = ${galpones.id}), 0)`.mapWith(Number);
-  const registrosDia = sql<number>`(select count(*) from ${galponRegistros} where ${galponRegistros.galponId} = ${galpones.id} and ${galponRegistros.fecha} = ${dia})`.mapWith(Number);
+  const delDia = sql`r."fecha" = ${dia}`;
+  // Gasto: kilos × precio del kilo, redondeado por día (como en la página). Cada día usa el precio del bulto
+  // guardado ese día o, si no tiene, el actual del galpón.
+  const gasto = `sum(round(r."alimento_kg" * coalesce(r."precio_bulto", "galpones"."precio_bulto") / ${KG_POR_BULTO}))`;
+  const kilos = 'sum(r."alimento_kg")';
+  const muertas = sobreRegistros('sum(r."muertas")');
+  const registrosDia = sobreRegistros('count(*)', delDia);
+  const alimentoKgHoy = sobreRegistros(kilos, delDia);
+  const gastoAlimentoHoy = sobreRegistros(gasto, delDia);
+  const alimentoKgLote = sobreRegistros(kilos);
+  const gastoAlimentoLote = sobreRegistros(gasto);
   return ej
-    .select({ galpon: galpones, muertasTotales: muertas, registradoHoy: registrosDia })
+    .select({
+      galpon: galpones,
+      muertasTotales: muertas,
+      registradoHoy: registrosDia,
+      alimentoKgHoy,
+      gastoAlimentoHoy,
+      alimentoKgLote,
+      gastoAlimentoLote,
+    })
     .from(galpones)
     .where(filtroActivo === 'todos' ? undefined : eq(galpones.activo, filtroActivo === 'true'))
     .orderBy(asc(galpones.nombre), asc(galpones.id));
@@ -70,6 +97,15 @@ export async function guardarRegistro(datos: typeof galponRegistros.$inferInsert
     .onConflictDoUpdate({ target: [galponRegistros.galponId, galponRegistros.fecha], set: { ...cambios, actualizadoEn: new Date() } })
     .returning();
   return fila!;
+}
+
+export async function buscarRegistroDelDia(galponId: number, fecha: string, ej: Ejecutor = db): Promise<FilaRegistro | undefined> {
+  const [fila] = await ej
+    .select()
+    .from(galponRegistros)
+    .where(and(eq(galponRegistros.galponId, galponId), eq(galponRegistros.fecha, fecha)))
+    .limit(1);
+  return fila;
 }
 
 export async function buscarRegistro(id: number, ej: Ejecutor = db): Promise<FilaRegistro | undefined> {

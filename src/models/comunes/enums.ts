@@ -5,6 +5,8 @@ export const metodoPago = pgEnum('metodo_pago', ['efectivo', 'transferencia']);
 export const tipoPrecio = pgEnum('tipo_precio', ['detal', 'mayorista']);
 export const estadoVenta = pgEnum('estado_venta', ['completada', 'anulada']);
 export const estadoCaja = pgEnum('estado_caja', ['abierta', 'cerrada']);
+/** postura: gallinas que ponen · levante: pollitas desde chiquitas, sin huevos. */
+export const tipoGalpon = pgEnum('tipo_galpon', ['postura', 'levante']);
 export const unidadMedida = pgEnum('unidad_medida', ['bulto', 'unidad', 'kilo']);
 export const categoriaGasto = pgEnum('categoria_gasto', [
   'arriendo',

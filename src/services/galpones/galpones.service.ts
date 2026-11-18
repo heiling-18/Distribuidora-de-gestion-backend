@@ -13,10 +13,13 @@ import type {
 } from '../../validators/galpones/galpones.validator.js';
 
 export const HUEVOS_POR_CARTON = 30;
-export const KG_POR_BULTO = 40;
+const { KG_POR_BULTO } = galponesRepo;
 
-/** Datos calculados que la interfaz necesita: aves vivas, edad y alimento sugerido para hoy. */
-function conCalculos(g: galponesRepo.FilaGalpon, muertasTotales: number, registradoHoy: boolean, hoy: string) {
+type FilaListado = Awaited<ReturnType<typeof galponesRepo.listarConTotales>>[number];
+
+/** Datos calculados que la interfaz necesita: aves vivas, edad, alimento sugerido y gasto en alimento. */
+function conCalculos(f: FilaListado, hoy: string) {
+  const { galpon: g, muertasTotales } = f;
   const avesVivas = Math.max(0, g.avesIniciales - muertasTotales);
   const alimentoSugeridoKg = Math.round(((avesVivas * g.gramosAveDia) / 1000) * 10) / 10;
   return {
@@ -26,14 +29,19 @@ function conCalculos(g: galponesRepo.FilaGalpon, muertasTotales: number, registr
     edadSemanas: g.edadSemanasLlegada + Math.floor(Math.max(0, diasEntre(g.fechaLlegada, hoy)) / 7),
     alimentoSugeridoKg,
     alimentoSugeridoBultos: Math.round((alimentoSugeridoKg / KG_POR_BULTO) * 100) / 100,
-    registradoHoy,
+    registradoHoy: f.registradoHoy > 0,
+    /** Gasto en alimento: kg × precio del bulto / 40, con el precio guardado cada día. */
+    alimento: {
+      hoy: { kg: f.alimentoKgHoy, gasto: f.gastoAlimentoHoy },
+      lote: { kg: f.alimentoKgLote, gasto: f.gastoAlimentoLote },
+    },
   };
 }
 
 export async function listarGalpones(usuario: UsuarioSesion, activo: 'true' | 'false' | 'todos') {
   const hoy = fechaNegocio();
   const filas = await galponesRepo.listarConTotales(usuario.rol === 'admin' ? activo : 'true', hoy);
-  return filas.map((f) => conCalculos(f.galpon, f.muertasTotales, f.registradoHoy > 0, hoy));
+  return filas.map((f) => conCalculos(f, hoy));
 }
 
 export async function crearGalpon(admin: UsuarioSesion, dto: CrearGalponDto, ip: string | null) {
@@ -86,14 +94,21 @@ export async function guardarRegistro(usuario: UsuarioSesion, galponId: number, 
     const g = await galponesRepo.bloquearPorId(galponId, tx);
     if (!g || (!g.activo && usuario.rol !== 'admin')) throw AppError.noEncontrado('Galpón no encontrado');
     if (fecha < g.fechaLlegada) throw AppError.solicitudInvalida('La fecha es anterior a la llegada de las aves');
+    if (g.tipo === 'levante' && dto.huevos > 0) {
+      throw AppError.solicitudInvalida('Este galpón es de levante: las pollitas aún no ponen huevos');
+    }
 
     const muertasPrevias = await galponesRepo.muertasAcumuladas(galponId, { sinElDia: fecha }, tx);
     if (muertasPrevias + dto.muertas > g.avesIniciales) {
       throw AppError.conflicto(`Solo quedan ${g.avesIniciales - muertasPrevias} aves vivas en este galpón`);
     }
 
+    // Precio del bulto de ese día: al corregir un día se conserva el que tenía; si no, el actual del galpón.
+    const previo = await galponesRepo.buscarRegistroDelDia(galponId, fecha, tx);
+    const precioBulto = previo?.precioBulto ?? g.precioBulto;
+
     return galponesRepo.guardarRegistro(
-      { galponId, fecha, ...dto, registradoPor: usuario.id, registradoPorNombre: usuario.nombre },
+      { galponId, fecha, ...dto, precioBulto, registradoPor: usuario.id, registradoPorNombre: usuario.nombre },
       tx,
     );
   });

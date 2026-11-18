@@ -10,10 +10,19 @@ const campos = {
   fechaLlegada: fechaDia,
   edadSemanasLlegada: entero(200),
   gramosAveDia: z.number().positive().max(1000),
+  tipo: z.enum(['postura', 'levante']),
+  /** Valor del bulto de 40 kg de purina. */
+  precioBulto: z.number().min(0, 'No puede ser negativo').max(10_000_000),
 };
 
 export const crearGalponSchema = z
-  .object({ ...campos, edadSemanasLlegada: campos.edadSemanasLlegada.default(0), gramosAveDia: campos.gramosAveDia.default(115) })
+  .object({
+    ...campos,
+    edadSemanasLlegada: campos.edadSemanasLlegada.default(0),
+    gramosAveDia: campos.gramosAveDia.default(115),
+    tipo: campos.tipo.default('postura'),
+    precioBulto: campos.precioBulto.default(0),
+  })
   .strict();
 
 export const actualizarGalponSchema = z
