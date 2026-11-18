@@ -37,8 +37,10 @@ async function stockDe(id: number) {
 
 /** Vendedor con caja abierta, listo para vender. */
 async function listoParaVender() {
+  // La caja la abre el administrador; el vendedor solo vende.
+  const admin = await sesion('admin');
+  await request(app).post('/api/caja/abrir').set('Cookie', admin.cookie).send({ montoInicial: 50000 });
   const s = await sesion('vendedor');
-  await request(app).post('/api/caja/abrir').set('Cookie', s.cookie).send({ montoInicial: 50000 });
   return s;
 }
 

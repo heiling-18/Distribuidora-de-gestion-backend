@@ -3,8 +3,19 @@ import { usuarioActual } from '../../middlewares/auth/autenticar.js';
 import * as cajaService from '../../services/caja/caja.service.js';
 import type { Paginacion } from '../../utils/paginacion/paginacion.js';
 
+/** { caja, proximaBase }: proximaBase = con cuánto se abrirá sola si no hay caja abierta. */
 export const actual: RequestHandler = async (_req, res) => {
-  res.json({ caja: await cajaService.cajaActual() });
+  res.json(await cajaService.cajaActual());
+};
+
+/** { caja, abierta }: caja = la abierta (o null si no tocaba abrir); abierta = si se abrió ahora. */
+export const abrirAutomatica: RequestHandler = async (req, res) => {
+  res.json(await cajaService.abrirAutomatica(usuarioActual(req), req.ip ?? null));
+};
+
+export const ajustarBase: RequestHandler = async (req, res) => {
+  const datos = req.body as { monto: number; motivo: string };
+  res.json({ caja: await cajaService.ajustarBase(usuarioActual(req), datos, req.ip ?? null) });
 };
 
 export const resumen: RequestHandler = async (_req, res) => {
@@ -18,7 +29,7 @@ export const abrir: RequestHandler = async (req, res) => {
 };
 
 export const cerrar: RequestHandler = async (req, res) => {
-  const datos = req.body as { dineroReal: number; observaciones?: string };
+  const datos = req.body as { dineroReal: number; baseSiguiente?: number; observaciones?: string };
   const cierre = await cajaService.cerrarCaja(usuarioActual(req), datos, req.ip ?? null);
   res.json({ cierre });
 };

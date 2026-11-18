@@ -15,7 +15,17 @@ export const abrirCajaSchema = z
 export const cerrarCajaSchema = z
   .object({
     dineroReal: montoPesos,
+    /** Lo que se deja en la gaveta para abrir mañana (0 ≤ base ≤ dineroReal). Si no viene, se deja todo. */
+    baseSiguiente: montoPesos.optional(),
     observaciones: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+/** El administrador cambia la base de la caja abierta, siempre con un motivo. */
+export const ajustarBaseSchema = z
+  .object({
+    monto: montoPesos,
+    motivo: z.string().trim().min(1, 'Escribe por qué cambias la base').max(120),
   })
   .strict();
 

@@ -15,7 +15,7 @@ describe('GET /api/health', () => {
     const res = await request(app).get('/api/health');
     expect(res.status).toBe(200);
     // La base de pruebas se migra antes de los tests: ninguna pendiente.
-    expect(res.body).toEqual({ ok: true, baseDeDatos: 'ok', migraciones: { ultima: '0000_esquema_inicial', pendientes: 0 } });
+    expect(res.body).toEqual({ ok: true, baseDeDatos: 'ok', migraciones: { ultima: expect.stringMatching(/^\d{4}_/), pendientes: 0 } });
   });
 
   it('incluye cabeceras de seguridad y no expone Express', async () => {

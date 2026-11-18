@@ -48,7 +48,7 @@ describe('permisos', () => {
 
 describe('abrir caja', () => {
   it('abre con la fecha de Colombia y la deja como caja actual', async () => {
-    const { cookie, usuario } = await sesion();
+    const { cookie, usuario } = await sesion('admin');
     const res = await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 150000 });
 
     expect(res.status).toBe(201);
@@ -59,7 +59,7 @@ describe('abrir caja', () => {
   });
 
   it('no permite abrir una segunda caja', async () => {
-    const { cookie } = await sesion();
+    const { cookie } = await sesion('admin');
     await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 100 });
     const res = await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 100 });
     expect(res.status).toBe(409);
@@ -67,7 +67,7 @@ describe('abrir caja', () => {
   });
 
   it('dos aperturas al mismo tiempo: solo una gana', async () => {
-    const { cookie } = await sesion();
+    const { cookie } = await sesion('admin');
     const respuestas = await Promise.all(
       [1, 2, 3].map(() => request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 100 })),
     );
@@ -76,14 +76,14 @@ describe('abrir caja', () => {
   });
 
   it('rechaza montos negativos o con más de 2 decimales', async () => {
-    const { cookie } = await sesion();
+    const { cookie } = await sesion('admin');
     expect((await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: -1 })).status).toBe(400);
     expect((await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 10.555 })).status).toBe(400);
     expect((await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: '100' })).status).toBe(400);
   });
 
   it('sin caja abierta, la caja actual es null y el resumen responde 409', async () => {
-    const { cookie } = await sesion();
+    const { cookie } = await sesion('admin');
     expect((await request(app).get('/api/caja/actual').set('Cookie', cookie)).body.caja).toBeNull();
     expect((await request(app).get('/api/caja/actual/resumen').set('Cookie', cookie)).status).toBe(409);
   });
@@ -91,7 +91,7 @@ describe('abrir caja', () => {
 
 describe('resumen y cierre', () => {
   async function cajaConMovimientos() {
-    const s = await sesion();
+    const s = await sesion('admin');
     const abierta = await request(app).post('/api/caja/abrir').set('Cookie', s.cookie).send({ montoInicial: 100000 });
     const cajaId = abierta.body.caja.id as number;
 
@@ -158,7 +158,7 @@ describe('resumen y cierre', () => {
   });
 
   it('cerrar sin caja abierta responde 409', async () => {
-    const { cookie } = await sesion();
+    const { cookie } = await sesion('admin');
     const res = await request(app).post('/api/caja/cerrar').set('Cookie', cookie).send({ dineroReal: 0 });
     expect(res.status).toBe(409);
   });
@@ -211,5 +211,85 @@ describe('historial de cierres', () => {
     expect((await request(app).get('/api/caja/cierres?hasta=2000-01-01').set('Cookie', cookie)).body.total).toBe(0);
     expect((await request(app).get('/api/caja/cierres?limite=500').set('Cookie', cookie)).status).toBe(400);
     expect((await request(app).get('/api/caja/cierres?desde=ayer').set('Cookie', cookie)).status).toBe(400);
+  });
+});
+
+describe('caja automática', () => {
+  /** Deja una caja cerrada en un día anterior, con `base` en la gaveta para mañana. */
+  async function cierreDeAyer(base: number | null) {
+    const [c] = await db
+      .insert(cajas)
+      .values({ fecha: '2026-01-02', montoInicial: 0, estado: 'cerrada', cerradaEn: new Date('2026-01-02T23:00:00-05:00'), baseSiguiente: base })
+      .returning();
+    return c!;
+  }
+
+  it('el vendedor ya no abre la caja a mano; el admin sí', async () => {
+    const vendedor = await sesion('vendedor');
+    expect((await request(app).post('/api/caja/abrir').set('Cookie', vendedor.cookie).send({ montoInicial: 1 })).status).toBe(403);
+  });
+
+  it('al cerrar se guarda la base para mañana y lo retirado; sin base, se deja todo', async () => {
+    const { cookie } = await sesion('admin');
+    await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 100000 });
+    const res = await request(app).post('/api/caja/cerrar').set('Cookie', cookie).send({ dineroReal: 100000, baseSiguiente: 30000 });
+    expect(res.body.cierre).toMatchObject({ baseSiguiente: 30000, retirado: 70000 });
+    const actual = await request(app).get('/api/caja/actual').set('Cookie', cookie);
+    expect(actual.body).toEqual({ caja: null, proximaBase: 30000 });
+
+    await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 5000 });
+    const todo = await request(app).post('/api/caja/cerrar').set('Cookie', cookie).send({ dineroReal: 5000 });
+    expect(todo.body.cierre).toMatchObject({ baseSiguiente: 5000, retirado: 0 });
+  });
+
+  it('no deja una base mayor que lo contado', async () => {
+    const { cookie } = await sesion('admin');
+    await request(app).post('/api/caja/abrir').set('Cookie', cookie).send({ montoInicial: 100 });
+    const res = await request(app).post('/api/caja/cerrar').set('Cookie', cookie).send({ dineroReal: 100, baseSiguiente: 101 });
+    expect(res.status).toBe(400);
+  });
+
+  it('abre sola con la base del cierre anterior, una sola vez aunque entren varios a la vez', async () => {
+    await cierreDeAyer(45000);
+    const vendedor = await sesion('vendedor');
+    const respuestas = await Promise.all(
+      [1, 2, 3].map(() => request(app).post('/api/caja/abrir-automatica').set('Cookie', vendedor.cookie)),
+    );
+    expect(respuestas.every((r) => r.status === 200)).toBe(true);
+    expect(respuestas.filter((r) => r.body.abierta)).toHaveLength(1);
+    expect(respuestas[0]!.body.caja).toMatchObject({ estado: 'abierta', montoInicial: 45000, fecha: fechaNegocio(), aperturaAutomatica: true });
+    expect(await db.$count(cajas, eq(cajas.estado, 'abierta'))).toBe(1);
+  });
+
+  it('no abre si nunca se dejó base (la primera la abre el admin) ni si ya se cerró hoy', async () => {
+    const vendedor = await sesion('vendedor');
+    const sinNada = await request(app).post('/api/caja/abrir-automatica').set('Cookie', vendedor.cookie);
+    expect(sinNada.body).toEqual({ caja: null, abierta: false });
+
+    await cierreDeAyer(null);
+    expect((await request(app).post('/api/caja/abrir-automatica').set('Cookie', vendedor.cookie)).body.caja).toBeNull();
+
+    const admin = await sesion('admin');
+    await request(app).post('/api/caja/abrir').set('Cookie', admin.cookie).send({ montoInicial: 1000 });
+    await request(app).post('/api/caja/cerrar').set('Cookie', admin.cookie).send({ dineroReal: 1000 });
+    expect((await request(app).post('/api/caja/abrir-automatica').set('Cookie', vendedor.cookie)).body.caja).toBeNull();
+  });
+
+  it('el admin ajusta la base con motivo; queda la original y la auditoría', async () => {
+    await cierreDeAyer(45000);
+    const vendedor = await sesion('vendedor');
+    const admin = await sesion('admin');
+    await request(app).post('/api/caja/abrir-automatica').set('Cookie', vendedor.cookie);
+
+    expect((await request(app).patch('/api/caja/actual/base').set('Cookie', vendedor.cookie).send({ monto: 1, motivo: 'x' })).status).toBe(403);
+    expect((await request(app).patch('/api/caja/actual/base').set('Cookie', admin.cookie).send({ monto: 1, motivo: ' ' })).status).toBe(400);
+
+    await request(app).patch('/api/caja/actual/base').set('Cookie', admin.cookie).send({ monto: 50000, motivo: 'Faltaba un billete' });
+    const res = await request(app).patch('/api/caja/actual/base').set('Cookie', admin.cookie).send({ monto: 48000, motivo: 'Recontado' });
+    expect(res.body.caja).toMatchObject({ montoInicial: 48000, baseOriginal: 45000, ajusteMotivo: 'Recontado', ajustadaPor: admin.usuario.nombre });
+    expect(await db.$count(auditoria, eq(auditoria.accion, 'caja.ajustar_base'))).toBe(2);
+
+    const resumen = await request(app).get('/api/caja/actual/resumen').set('Cookie', vendedor.cookie);
+    expect(resumen.body.resumen.dineroEsperado).toBe(48000);
   });
 });

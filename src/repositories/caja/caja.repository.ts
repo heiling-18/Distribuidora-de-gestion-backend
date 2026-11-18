@@ -20,6 +20,11 @@ const columnasCaja = {
   abiertaPor: abre.nombre,
   cerradaEn: cajas.cerradaEn,
   cerradaPor: cierra.nombre,
+  aperturaAutomatica: cajas.aperturaAutomatica,
+  baseOriginal: cajas.baseOriginal,
+  ajusteMotivo: cajas.ajusteMotivo,
+  ajustadaPor: cajas.ajustadaPor,
+  baseSiguiente: cajas.baseSiguiente,
 };
 
 function consultaCaja(ej: Ejecutor) {
@@ -58,15 +63,37 @@ export async function compartirPorId(id: number, tx: Tx): Promise<FilaCaja | und
   return fila;
 }
 
-export async function crear(datos: { fecha: string; montoInicial: number; abiertaPor: number }, ej: Ejecutor = db) {
+export async function crear(
+  datos: { fecha: string; montoInicial: number; abiertaPor: number; aperturaAutomatica?: boolean },
+  ej: Ejecutor = db,
+) {
   const [fila] = await ej.insert(cajas).values(datos).returning();
   return fila!;
 }
 
-export async function marcarCerrada(id: number, cerradaPor: number, tx: Tx): Promise<void> {
+/** La caja más reciente (abierta o cerrada). */
+export async function ultima(ej: Ejecutor = db): Promise<FilaCaja | undefined> {
+  const [fila] = await ej.select().from(cajas).orderBy(desc(cajas.id)).limit(1);
+  return fila;
+}
+
+export async function marcarCerrada(id: number, datos: { cerradaPor: number; baseSiguiente: number }, tx: Tx): Promise<void> {
   await tx
     .update(cajas)
-    .set({ estado: 'cerrada', cerradaPor, cerradaEn: new Date() })
+    .set({ estado: 'cerrada', cerradaPor: datos.cerradaPor, baseSiguiente: datos.baseSiguiente, cerradaEn: new Date() })
+    .where(eq(cajas.id, id));
+}
+
+/** Cambia la base de una caja; la primera vez guarda la base con la que se abrió. */
+export async function ajustarBase(id: number, datos: { monto: number; motivo: string; ajustadaPor: string }, tx: Tx): Promise<void> {
+  await tx
+    .update(cajas)
+    .set({
+      baseOriginal: sql`coalesce(${cajas.baseOriginal}, ${cajas.montoInicial})`,
+      montoInicial: datos.monto,
+      ajusteMotivo: datos.motivo,
+      ajustadaPor: datos.ajustadaPor,
+    })
     .where(eq(cajas.id, id));
 }
 
