@@ -7,6 +7,7 @@ const MENSAJES_UNICOS: Record<string, string> = {
   clientes_documento_unico: 'Ya existe un cliente con ese documento',
   cajas_una_abierta: 'Ya hay una caja abierta',
   galpon_registros_un_dia: 'Ese galpón ya tiene registro para ese día',
+  huevo_tipos_nombre_unico: 'Ya existe un tamaño de huevo con ese nombre',
 };
 
 interface ErrorPg {

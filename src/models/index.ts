@@ -11,3 +11,4 @@ export * from './inventario/inventario.model.js';
 export * from './auditoria/auditoria.model.js';
 export * from './configuracion/configuracion.model.js';
 export * from './galpones/galpones.model.js';
+export * from './huevos/huevos.model.js';

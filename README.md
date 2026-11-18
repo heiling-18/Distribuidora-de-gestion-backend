@@ -1,6 +1,6 @@
 # DYM'S · API
 
-API de la distribuidora DYM'S: punto de venta, caja, inventario, clientes, gastos, reportes y galpones.
+API de la distribuidora DYM'S: punto de venta, caja, inventario, clientes, gastos, reportes, galpones y huevos.
 La usa el frontend [Distribuidora-de-gestion](https://github.com/heiling-18/Distribuidora-de-gestion) y reemplaza a Supabase.
 
 **Stack:** Node.js 22+ · Express 5 · TypeScript · PostgreSQL 17 · Drizzle ORM · Zod · Vitest
@@ -108,13 +108,14 @@ Todo vive bajo `/api`. Salvo `/health` y `/auth/login|logout`, **todo exige sesi
 | Salud | `GET /health` (estado de la base y de las migraciones: `ultima`, `pendientes`) | público |
 | Auth | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/cambiar-clave` | público / con sesión |
 | Usuarios | `GET,POST /usuarios`, `GET,PATCH /usuarios/:id`, `POST /usuarios/:id/restablecer-clave` | admin |
-| Caja | `GET /caja/actual`, `GET /caja/actual/resumen`, `POST /caja/abrir`, `POST /caja/cerrar`, `GET /caja/cierres[/:id]` | admin, vendedor |
+| Caja | `GET /caja/actual` (con `proximaBase`), `GET /caja/actual/resumen`, `POST /caja/abrir-automatica`, `POST /caja/cerrar` (con `baseSiguiente`), `GET /caja/cierres[/:id]`; `POST /caja/abrir` y `PATCH /caja/actual/base` (admin) | admin, vendedor |
 | Ventas | `POST /ventas`, `GET /ventas[/:id]`, `POST /ventas/:id/anular` | admin, vendedor |
 | Productos | `GET /productos[/:id]`; `POST`, `PATCH`, `DELETE`, `POST /:id/ajuste-stock`, `GET /:id/movimientos` (admin) | admin, vendedor |
 | Clientes | `GET,POST /clientes`, `GET,PATCH /clientes/:id`; `DELETE` (admin) | admin, vendedor |
 | Gastos | `GET,POST /gastos`, `GET,PATCH,DELETE /gastos/:id` | admin |
-| Reportes | `GET /reportes/dashboard` (admin, vendedor; incluye `acumulado` de todos los meses); `GET /reportes/mes`, `GET /reportes/historico` (con `primerMes` y `ultimos12Meses`), `GET,POST /reportes/cierres-mes` (actas y meses `porCerrar`) (admin) | |
-| Galpones | `GET /galpones`, `GET /galpones/registros`, `PUT /galpones/:id/registros/:fecha`; crear, editar y borrar (admin) | admin, galponero |
+| Reportes | `GET /reportes/dashboard` (admin, vendedor; incluye `acumulado` de todos los meses); `GET /reportes/mes`, `GET /reportes/historico` (con `primerMes`, `ultimos12Meses`, `vendidoPorUnidad` y `promedioBultosMes`), `GET,POST /reportes/cierres-mes` (actas y meses `porCerrar`) (admin) | |
+| Galpones | `GET /galpones` (con gasto en `alimento` del día y del lote), `GET /galpones/registros`, `PUT /galpones/:id/registros/:fecha`; crear, editar y borrar (admin) | admin, galponero |
+| Huevos | `GET /huevos/resumen`, `GET /huevos/tipos`, `PATCH /huevos/tipos/:id` (el vendedor solo el precio), `POST /huevos/ventas`, `POST /huevos/rotos`, `POST /huevos/ingresos`, `GET /huevos/movimientos?mes=&clase=`; `POST`, `DELETE /huevos/tipos[/:id]` y `PATCH`, `DELETE /huevos/movimientos/:id` (admin) | admin, vendedor |
 | Configuración | `GET /configuracion`; `PATCH` (admin) | con sesión |
 
 Los errores siempre llegan como `{ "error": { "codigo", "mensaje", "detalles" } }`.
@@ -125,6 +126,10 @@ Los errores siempre llegan como `{ "error": { "codigo", "mensaje", "detalles" } 
 
 - **Sesión:** JWT en cookie `httpOnly`. Cambiar la clave, el rol o desactivar a un usuario cierra sus sesiones al instante. Las claves bcrypt importadas de Supabase sirven y se pasan a argon2 en el primer login.
 - **Caja:** solo una abierta a la vez. El efectivo esperado y la diferencia los calcula el servidor; el cierre es atómico.
+- **Caja automática:** al cerrar se dice cuánto queda en la gaveta (`baseSiguiente`, por defecto todo lo contado) y se guarda lo `retirado`. Al día siguiente `POST /caja/abrir-automatica` la abre sola con esa base, una sola vez aunque entren varios a la vez. No abre si ya se cerró hoy ni si nunca se dejó base: la primera vez la abre el admin con `POST /caja/abrir`. El admin puede ajustar la base con un motivo; queda la base original y la auditoría.
+- **Reportes:** lo vendido se separa por unidad (`vendidoPorUnidad`: bultos, kilos, unidades) para no sumar kilos con bultos.
+- **Galpones:** `postura` (ponen huevos) o `levante` (pollitas: sin huevos). Cada día guarda el precio del bulto de 40 kg, así el gasto de días pasados no cambia si sube el bulto. Gasto = kg × precio del bulto / 40.
+- **Huevos:** producción propia, contada siempre en huevos (cartón = 30). Inventario por tamaño = entradas − ventas − rotos, **nunca negativo** (bloqueo por tamaño). Un cobro del carrito guarda todas sus líneas o ninguna, con clave de idempotencia. Por unidad se cobra `round(precio del cartón / 30)`. El vendedor anota solo hoy; el admin cualquier día, corrige y borra (si no deja un tamaño en negativo).
 - **Ventas:** el precio y los totales salen de la base (el cliente solo manda producto, cantidad y tipo de precio). **Los precios incluyen IVA**: el IVA se separa del total, no se suma. Exige caja abierta, bloquea el stock por fila y usa una clave de idempotencia para no duplicar ventas.
 - **Anulación:** admin o vendedor, con motivo obligatorio y registro en la auditoría; devuelve el stock por producto. Se puede anular aunque la caja de la venta ya se cerró (el acta de ese cierre no cambia). Solo se bloquea si **el mes ya se cerró**.
 - **Gastos:** un gasto en efectivo de hoy se liga a la caja abierta y se descuenta del arqueo. Si no hay caja abierta se guarda igual y la respuesta trae un `aviso`. Un gasto de una caja ya cerrada se puede editar o borrar (el acta no cambia); solo se bloquea si el mes está cerrado.
