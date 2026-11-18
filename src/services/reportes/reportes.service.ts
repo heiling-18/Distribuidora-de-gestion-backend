@@ -84,6 +84,13 @@ function mesesAntes(mes: string, n: number): string {
   return new Date(Date.UTC(a, m - 1 - n, 1)).toISOString().slice(0, 10);
 }
 
+/** Meses de diferencia entre dos meses "YYYY-MM-01" (`hasta` - `desde`). */
+function mesesEntre(desde: string, hasta: string): number {
+  const [a1, m1] = desde.split('-').map(Number) as [number, number];
+  const [a2, m2] = hasta.split('-').map(Number) as [number, number];
+  return (a2 - a1) * 12 + (m2 - m1);
+}
+
 export async function historico() {
   const actual = mesNegocio();
   const [totales, porMes] = await Promise.all([
@@ -104,11 +111,16 @@ export async function historico() {
       utilidadNeta: m?.utilidadNeta ?? 0,
     };
   });
+  const primerMes = porMes.at(-1)?.mes ?? null;
   return {
     ...totales,
     margen: margen(totales.gananciaBruta, totales.totalVentas),
     /** Primer mes con ventas o gastos ("YYYY-MM-01"); null si aún no hay movimiento. */
-    primerMes: porMes.at(-1)?.mes ?? null,
+    primerMes,
+    /** Bultos vendidos por mes, contando desde el primer mes con movimiento hasta el actual (incluidos). */
+    promedioBultosMes: primerMes
+      ? Math.round((totales.vendidoPorUnidad.bulto / (mesesEntre(primerMes, actual) + 1)) * 10) / 10
+      : 0,
     porMes,
     ultimos12Meses,
   };

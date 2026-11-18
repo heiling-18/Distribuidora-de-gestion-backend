@@ -12,6 +12,12 @@ const suma = (col: unknown, filtro = completada) => sql<number>`coalesce(sum(${c
 const ventasEntre = (desde: string, hasta: string) =>
   and(sql`${ventas.fecha} >= ${inicioDelDia(desde)}`, sql`${ventas.fecha} < ${inicioDelDia(hasta)}`);
 
+export interface VendidoPorUnidad {
+  bulto: number;
+  kilo: number;
+  unidad: number;
+}
+
 export interface TotalesPeriodo {
   totalVentas: number;
   ventasEfectivo: number;
@@ -21,6 +27,8 @@ export interface TotalesPeriodo {
   numVentas: number;
   numAnuladas: number;
   unidadesVendidas: number;
+  /** Cantidad vendida separada por unidad de medida, para no sumar kilos con bultos. */
+  vendidoPorUnidad: VendidoPorUnidad;
   totalGastos: number;
   utilidadNeta: number;
 }
@@ -43,8 +51,15 @@ export async function totalesPeriodo(desde: string | null, hasta: string, ej: Ej
       })
       .from(ventas)
       .where(filtroVentas);
+  // Por unidad de medida; una línea sin unidad (importada) cuenta como bulto, igual que en la página.
+  const sumaDe = (unidad: string) =>
+    sql<number>`coalesce(sum(${ventaItems.cantidad}) filter (where coalesce(${ventaItems.unidadMedida}::text, 'bulto') = ${unidad}), 0)`.mapWith(Number);
   const [u] = await ej
-    .select({ unidades: sql<number>`coalesce(sum(${ventaItems.cantidad}), 0)`.mapWith(Number) })
+    .select({
+      unidades: sql<number>`coalesce(sum(${ventaItems.cantidad}), 0)`.mapWith(Number),
+      kilo: sumaDe('kilo'),
+      unidad: sumaDe('unidad'),
+    })
     .from(ventaItems)
     .innerJoin(ventas, eq(ventas.id, ventaItems.ventaId))
     .where(and(filtroVentas, completada));
@@ -56,6 +71,11 @@ export async function totalesPeriodo(desde: string | null, hasta: string, ej: Ej
   return {
     ...v!,
     unidadesVendidas: u!.unidades,
+    vendidoPorUnidad: {
+      bulto: Math.round((u!.unidades - u!.kilo - u!.unidad) * 1000) / 1000,
+      kilo: u!.kilo,
+      unidad: u!.unidad,
+    },
     totalGastos: g!.total,
     utilidadNeta: Math.round((v!.gananciaBruta - g!.total) * 100) / 100,
   };

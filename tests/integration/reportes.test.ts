@@ -208,6 +208,29 @@ describe('histórico', () => {
   });
 });
 
+describe('vendido por unidad', () => {
+  it('separa bultos, kilos y unidades y promedia los bultos por mes', async () => {
+    const admin = await escenarioMesActual(); // 4 bultos vendidos hoy (la venta anulada no cuenta)
+    const mes = mesAnterior();
+    await ventaEn(`${mes.slice(0, 8)}05T12:00:00-05:00`, 10000, 2000, 2); // línea sin unidad: cuenta como bulto
+    const [v] = await db
+      .insert(ventas)
+      .values({ vendedorNombre: 'Test', metodoPago: 'efectivo', subtotal: 25000, total: 25000, costoTotal: 20000, gananciaBruta: 5000 })
+      .returning();
+    await db.insert(ventaItems).values([
+      { ventaId: v!.id, productoNombre: 'Maíz', unidadMedida: 'kilo', cantidad: 12.5, precioUnitario: 2000, costoUnitario: 0, subtotal: 25000, total: 25000 },
+      { ventaId: v!.id, productoNombre: 'Bebedero', unidadMedida: 'unidad', cantidad: 3, precioUnitario: 0, costoUnitario: 0, subtotal: 0, total: 0 },
+    ]);
+
+    const delMes = await request(app).get('/api/reportes/mes').set('Cookie', admin.cookie);
+    expect(delMes.body.reporte.vendidoPorUnidad).toEqual({ bulto: 4, kilo: 12.5, unidad: 3 });
+
+    const { historico } = (await request(app).get('/api/reportes/historico').set('Cookie', admin.cookie)).body;
+    expect(historico.vendidoPorUnidad).toEqual({ bulto: 6, kilo: 12.5, unidad: 3 });
+    expect(historico.promedioBultosMes).toBe(3); // 6 bultos en 2 meses
+  });
+});
+
 describe('meses por cerrar', () => {
   it('lista los meses terminados con movimiento que aún no se cierran, con sus cifras', async () => {
     const admin = await escenarioMesActual();
