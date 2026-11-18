@@ -104,8 +104,9 @@ export async function guardarRegistro(usuario: UsuarioSesion, galponId: number, 
     }
 
     // Precio del bulto de ese día: al corregir un día se conserva el que tenía; si no, el actual del galpón.
+    // Sin precio no se guarda 0: queda vacío y toma el del galpón cuando se lo pongan.
     const previo = await galponesRepo.buscarRegistroDelDia(galponId, fecha, tx);
-    const precioBulto = previo?.precioBulto ?? g.precioBulto;
+    const precioBulto = previo?.precioBulto ?? (g.precioBulto > 0 ? g.precioBulto : null);
 
     return galponesRepo.guardarRegistro(
       { galponId, fecha, ...dto, precioBulto, registradoPor: usuario.id, registradoPorNombre: usuario.nombre },

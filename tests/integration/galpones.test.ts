@@ -154,6 +154,17 @@ describe('levante y precio del bulto', () => {
     });
   });
 
+  it('un galpón sin precio deja el día vacío y toma el precio cuando se lo ponen', async () => {
+    const admin = await sesionDe(app, 'admin');
+    const g = await galponCreado(admin.cookie);
+    const registro = await request(app).put(`/api/galpones/${g.id}/registros/${hoy()}`).set('Cookie', admin.cookie).send({ huevos: 800, alimentoKg: 20 });
+    expect(registro.body.registro.precioBulto).toBeNull();
+
+    await request(app).patch(`/api/galpones/${g.id}`).set('Cookie', admin.cookie).send({ precioBulto: 120000 });
+    const [galpon] = (await request(app).get('/api/galpones').set('Cookie', admin.cookie)).body.galpones;
+    expect(galpon.alimento.hoy).toEqual({ kg: 20, gasto: 60000 }); // 20 kg × 120.000 / 40
+  });
+
   it('valida tipo y precio del bulto', async () => {
     const admin = await sesionDe(app, 'admin');
     const base = { nombre: 'X', avesIniciales: 10, fechaLlegada: hoy() };
